@@ -4,7 +4,11 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset, Subset
-from torch_geometric.data import Data, DataLoader
+from torch_geometric.data import Data
+try:
+    from torch_geometric.loader import DataLoader
+except ImportError:
+    from torch_geometric.data import DataLoader
 
 
 def load_cache_metadata(cache_dir):
