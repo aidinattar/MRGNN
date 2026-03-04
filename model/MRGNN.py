@@ -1,9 +1,12 @@
 import torch
-from torch.functional import F
+import torch.nn.functional as F
 torch.set_printoptions(profile="full")
-from torch_geometric.nn.conv.graph_conv import GraphConv
 from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp, global_add_pool as gadd, global_max_pool as gmin
-from torch_geometric.utils.get_laplacian import get_laplacian
+try:
+    from torch_geometric.utils import get_laplacian
+except ImportError:
+    # Backward compatibility with very old PyG releases.
+    from torch_geometric.utils.get_laplacian import get_laplacian
 from math import floor
 from utils.Linear_masked_weight import Linear_masked_weight
 from torch.nn.utils import spectral_norm
@@ -157,13 +160,15 @@ class MRGNN(torch.nn.Module):
 
 
     def get_TANH_resevoir_A_PROTEINS(self,data):
-
-        data.x = data.x[:, 1:]
+        # Some PROTEINS variants expose an extra leading feature column.
+        # Drop it only when needed to match model input channels.
+        if data.x is not None and data.x.shape[1] == (self.in_channels + 1):
+            data.x = data.x[:, 1:]
         return self.get_TANH_resevoir_A(data)
 
     def get_TANH_resevoir_L_PROTEINS(self,data):
-
-        data.x = data.x[:, 1:]
+        if data.x is not None and data.x.shape[1] == (self.in_channels + 1):
+            data.x = data.x[:, 1:]
         return self.get_TANH_resevoir_L(data)
 
 
