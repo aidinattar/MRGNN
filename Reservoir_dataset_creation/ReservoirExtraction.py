@@ -4,7 +4,10 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
 
 from torch_geometric.datasets import TUDataset
-from torch_geometric.data import DataLoader
+try:
+    from torch_geometric.loader import DataLoader
+except ImportError:
+    from torch_geometric.data import DataLoader
 from utils.utils_method import get_graph_diameter
 from model.MRGNN import MRGNN
 
