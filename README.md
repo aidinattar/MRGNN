@@ -34,3 +34,60 @@ If you find this code useful, please cite the following:
   year={2021},  
   publisher={IEEE}  
 }
+
+## Code map
+
+- `model/MRGNN.py`: core model. It has:
+  - reservoir feature builders (`get_TANH_resevoir_A`, `get_TANH_resevoir_L`, `*_PROTEINS`),
+  - readout forward (`readout_fw`) used during supervised training.
+- `Reservoir_dataset_creation/ReservoirExtraction.py`: original preprocessing based on `TUDataset(pre_transform=...)`.
+- `data_reader/cross_validation_reader.py`: original split and dataloader generation on TUDataset.
+- `impl/binGraphClassifier.py`: training/evaluation loop for graph classification.
+- `experiments/*/*.py`: exhaustive hyperparameter sweeps for each dataset.
+
+## New: MPI coarse-grained preprocessing cache
+
+This repository now includes a distributed preprocessing script for graph classification:
+
+- each MPI rank processes a disjoint shard of graph indices,
+- each rank computes full reservoir features locally,
+- each graph is saved as a compressed cache file (`.npz`),
+- training can be done later (also single GPU) by only reading this cache.
+
+### 1) Build cache with MPI
+
+```bash
+mpirun -np 8 python Reservoir_dataset_creation/mpi_reservoir_cache_preprocess.py \
+  --dataset-root ~/Dataset/NCI1 \
+  --dataset-name NCI1 \
+  --output-root ~/Dataset/Reservoir_MPI_Cache \
+  --n-units 50 \
+  --n-classes 2 \
+  --max-k 4 \
+  --adjacency-matrix A \
+  --runs 0 1 2 3 4
+```
+
+Output layout for each run:
+
+- `metadata.json`: cache metadata and completion stats.
+- `graphs/graph_XXXXXXXX.npz`: per-graph cache (`reservoir`, `y`, `num_nodes`, `graph_id`).
+- `shards/rank_XXXXX.json`: per-rank processing stats.
+
+### 2) Train from cache
+
+```bash
+python experiments/train_from_cache.py \
+  --cache-dir ~/Dataset/Reservoir_MPI_Cache/run_0_TANH_RES_A_4_n_units_50_NCI1 \
+  --n-epochs 500 \
+  --n-folds 10 \
+  --lr 1e-3 \
+  --drop-prob 0.5 \
+  --weight-decay 5e-4 \
+  --batch-size 32 \
+  --output funnel
+```
+
+Training loader from cache is implemented in:
+
+- `data_reader/reservoir_cache_dataset.py`
