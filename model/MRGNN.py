@@ -3,8 +3,13 @@ from torch.functional import F
 torch.set_printoptions(profile="full")
 from torch_geometric.nn.conv.graph_conv import GraphConv
 from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp, global_add_pool as gadd, global_max_pool as gmin
-from torch_geometric.utils.get_laplacian import get_laplacian
+from torch_geometric.utils import get_laplacian
 from math import floor
+#cose aggiunte
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+#######
 from utils.Linear_masked_weight import Linear_masked_weight
 from torch.nn.utils import spectral_norm
 
@@ -130,6 +135,49 @@ class MRGNN(torch.nn.Module):
 
         return data
 
+    def get_TANH_resevoir_D(self, data):
+        tanh = torch.nn.Tanh()
+        relu = torch.nn.ReLU()
+
+        if data.x is None:
+            data = self.add_unitary_x(data)
+
+        X = data.x
+        k = self.max_k
+
+        # Calcola la matrice di adiacenza A
+        adjacency_indexes = data.edge_index
+        A_rows = adjacency_indexes[0]
+        A_data = [1] * A_rows.shape[0]
+        v_index = torch.FloatTensor(A_data).to(self.device)
+        A_shape = [X.shape[0], X.shape[0]]
+        A = torch.sparse.FloatTensor(adjacency_indexes, v_index, torch.Size(A_shape)).to_dense()
+
+        I = torch.eye(A.shape[0]).to(self.device)
+
+        # Calcola la matrice Laplaciana
+        L_edge_index, L_values = get_laplacian(data.edge_index, normalization="sym")
+        L = torch.sparse.FloatTensor(L_edge_index, L_values, torch.Size([X.shape[0], X.shape[0]])).to_dense()
+
+        lam = I - 0.5*L
+        mu= I + 0.66667*L
+
+        H = [X]
+
+        xhi_layer_i = X
+
+        for i in range(k - 1):
+
+            if i % 2 == 0:
+              xhi_layer_i = torch.mm(lam, xhi_layer_i)
+            else:
+              xhi_layer_i = torch.mm(mu, xhi_layer_i)
+            H.append(xhi_layer_i)
+
+        H = self.lin(torch.cat(H, dim=1), self.xhi_layer_mask)
+        data.reservoir = H
+
+        return data
 
     def get_TANH_resevoir_L(self, data):
 

@@ -58,5 +58,5 @@ def Create_Reservoir_Dataset(native_dataset_path, native_dataset_name, n_units, 
                 TUDataset(
                     root=os.path.join(reservoir_augmented_dataset_root, current_reservoir_augmented_dataset_name),
                     name=native_dataset_name,
-                    pre_transform=model.get_TANH_resevoir_L,
+                    pre_transform=model.get_TANH_resevoir_D,
                     use_node_attr=use_node_attr)
