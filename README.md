@@ -91,3 +91,52 @@ python experiments/train_from_cache.py \
 Training loader from cache is implemented in:
 
 - `data_reader/reservoir_cache_dataset.py`
+
+## New: OpenMP CSR + normalization + multihop prep
+
+This branch adds a dedicated preprocessing path focused on CPU parallelism:
+
+- CSR build from edge list (`row_ptr`, `col_idx`)
+- GCN normalization on CSR values (`D^{-1/2}(A+I)D^{-1/2}`)
+- multi-hop diffusion prep (`K` steps) with OpenMP loops
+
+Implementation files:
+
+- `cpp_omp/graph_preprocess_omp.cpp`: OpenMP kernels
+- `utils/omp_graph_preprocess.py`: Python ctypes wrapper + auto-build
+- `Reservoir_dataset_creation/mpi_omp_csr_multihop_preprocess.py`: MPI sharding + cache writing
+- `benchmarks/benchmark_omp_preprocess_threads.py`: preprocess benchmark vs threads
+
+### 1) Run MPI + OpenMP preprocessing
+
+```bash
+mpirun -np 8 python Reservoir_dataset_creation/mpi_omp_csr_multihop_preprocess.py \
+  --dataset-root ~/Dataset/PROTEINS \
+  --dataset-name PROTEINS \
+  --output-root ~/Dataset/Reservoir_OMP_Cache \
+  --n-units 50 \
+  --n-classes 2 \
+  --max-k 4 \
+  --runs 0 \
+  --omp-threads 8
+```
+
+Output (per run):
+
+- `graphs/graph_XXXXXXXX.npz`: `reservoir`, CSR (`row_ptr`, `col_idx`), normalized values
+- `metadata.json`: global stats
+- `shards/rank_XXXXX.json`: per-rank timing stats
+
+### 2) Benchmark preprocess time vs threads
+
+```bash
+python benchmarks/benchmark_omp_preprocess_threads.py \
+  --dataset-root ~/Dataset/PROTEINS \
+  --dataset-name PROTEINS \
+  --max-k 4 \
+  --threads 1 2 4 8 16 \
+  --num-graphs 256 \
+  --repeats 3 \
+  --select largest \
+  --output-json ./benchmark_results/proteins_omp_threads.json
+```

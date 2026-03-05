@@ -5,3 +5,6 @@
 .directory/
 .idea/
 Dataset/
+build/
+benchmark_results/
+__pycache__/
