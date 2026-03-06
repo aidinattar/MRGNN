@@ -1,0 +1,14 @@
+run_0_MRGNN_data-ENZYMES_adjacency_matrix-A_nFold-10_lr-0.001_drop_prob-0.5_weight-decay-0.0005_batchSize-32_nHidden-50_output-restricted_funnel_maxK-3
+2026-03-05 21:18:48.773093
+
+dataset_name: 	ENZYMES
+n_fold: 	10
+learning_rate: 	0.001
+drop_prob: 	0.5
+weight_decay: 	0.0005
+batch_size: 	32
+n_hidden: 	50
+test_epoch: 	1
+aggregator: 	concat
+output: 	restricted_funnel
+max_k: 	3

@@ -136,42 +136,39 @@ class MRGNN(torch.nn.Module):
         return data
 
     def get_TANH_resevoir_D(self, data):
+        # Nota: tanh è inizializzata, ma nel tuo codice originale non la applichi 
+        # all'interno del ciclo for. L'ho lasciata qui in caso ti servisse.
         tanh = torch.nn.Tanh()
-        relu = torch.nn.ReLU()
-
+        
         if data.x is None:
             data = self.add_unitary_x(data)
 
         X = data.x
         k = self.max_k
+        N = X.shape[0]
 
-        # Calcola la matrice di adiacenza A
-        adjacency_indexes = data.edge_index
-        A_rows = adjacency_indexes[0]
-        A_data = [1] * A_rows.shape[0]
-        v_index = torch.FloatTensor(A_data).to(self.device)
-        A_shape = [X.shape[0], X.shape[0]]
-        A = torch.sparse.FloatTensor(adjacency_indexes, v_index, torch.Size(A_shape)).to_dense()
-
-        I = torch.eye(A.shape[0]).to(self.device)
-
-        # Calcola la matrice Laplaciana
+        # 1. Calcola la Laplaciana e mantienila in formato SPARSO
         L_edge_index, L_values = get_laplacian(data.edge_index, normalization="sym")
-        L = torch.sparse.FloatTensor(L_edge_index, L_values, torch.Size([X.shape[0], X.shape[0]])).to_dense()
-
-        lam = I - 0.5*L
-        mu= I + 0.66667*L
+        L_sparse = torch.sparse_coo_tensor(
+            L_edge_index, 
+            L_values, 
+            torch.Size([N, N])
+        ).to(X.device)
 
         H = [X]
-
         xhi_layer_i = X
 
         for i in range(k - 1):
+            # 2. Singola moltiplicazione sparsa per iterazione: calcoliamo (L * X)
+            L_x = torch.sparse.mm(L_sparse, xhi_layer_i)
 
             if i % 2 == 0:
-              xhi_layer_i = torch.mm(lam, xhi_layer_i)
+                # Equivale a: (I - 0.5*L) * xhi_layer_i
+                xhi_layer_i = xhi_layer_i - 0.5 * L_x
             else:
-              xhi_layer_i = torch.mm(mu, xhi_layer_i)
+                # Equivale a: (I + 0.66667*L) * xhi_layer_i
+                xhi_layer_i = xhi_layer_i + 0.66667 * L_x
+                
             H.append(xhi_layer_i)
 
         H = self.lin(torch.cat(H, dim=1), self.xhi_layer_mask)

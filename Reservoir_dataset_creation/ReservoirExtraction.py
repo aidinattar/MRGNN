@@ -19,7 +19,7 @@ def Create_Reservoir_Dataset(native_dataset_path, native_dataset_name, n_units, 
     device = 'cpu'
 
     dataset = TUDataset(root=native_dataset_path, name=native_dataset_name, pre_transform=get_graph_diameter,
-                        use_node_attr=use_node_attr)
+                        use_node_attr=use_node_attr, force_reload=True ) # added force_reload = True
 
     loader = DataLoader(dataset,
                         batch_size=1,
