@@ -30,14 +30,19 @@ class MRGNN(torch.nn.Module):
         self.lin = spectral_norm(Linear_masked_weight(self.in_channels*(max_k), self.out_channels*(max_k))) #SPECTRAL NORM
         self.dropout = torch.nn.Dropout(p=drop_prob)
 
-        #xhi_layer_mask
-        xhi_layer_mask=[]
+        # xhi_layer_mask is registered as a buffer so `.to(device)` moves it
+        # together with parameters (needed for multi-GPU fold training).
+        xhi_layer_mask = []
         for i in range(max_k):
-            mask_ones = torch.ones(out_channels, in_channels * (i + 1)).to(self.device)
-            mask_zeros=torch.zeros(out_channels,in_channels*(max_k-(i+1))).to(self.device)
-            xhi_layer_mask.append(torch.cat([mask_ones,mask_zeros],dim=1))
+            mask_ones = torch.ones(
+                out_channels, in_channels * (i + 1), device=self.device
+            )
+            mask_zeros = torch.zeros(
+                out_channels, in_channels * (max_k - (i + 1)), device=self.device
+            )
+            xhi_layer_mask.append(torch.cat([mask_ones, mask_zeros], dim=1))
 
-        self.xhi_layer_mask=torch.cat(xhi_layer_mask,dim=0).to(self.device)
+        self.register_buffer("xhi_layer_mask", torch.cat(xhi_layer_mask, dim=0))
         self.bn_hidden_rec = torch.nn.BatchNorm1d(self.out_channels * max_k)
         self.bn_out = torch.nn.BatchNorm1d(self.out_channels * max_k *3)
         self.out_fun = torch.nn.LogSoftmax(dim=1)

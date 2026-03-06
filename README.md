@@ -92,6 +92,21 @@ Training loader from cache is implemented in:
 
 - `data_reader/reservoir_cache_dataset.py`
 
+### Optional: parallel folds on multiple GPUs
+
+If you have multiple GPUs, you can train CV folds in parallel:
+
+```bash
+python experiments/train_from_cache.py \
+  --cache-dir ~/Dataset/Reservoir_MPI_Cache/run_0_TANH_RES_A_4_n_units_50_NCI1 \
+  --n-epochs 500 \
+  --n-folds 10 \
+  --batch-size 64 \
+  --output funnel \
+  --parallel-folds \
+  --gpu-ids 0 1 2 3
+```
+
 ## New: OpenMP CSR + normalization + multihop prep
 
 This branch adds a dedicated preprocessing path focused on CPU parallelism:

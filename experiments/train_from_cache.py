@@ -1,6 +1,8 @@
 import argparse
+import multiprocessing as mp
 import os
 import sys
+import traceback
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
@@ -50,6 +52,13 @@ def parse_args():
                         help="Seed for split generation.")
     parser.add_argument("--log-dir", type=str, default="./test_log/cache",
                         help="Training log directory.")
+    parser.add_argument("--parallel-folds", action="store_true",
+                        help="Train CV folds in parallel across multiple devices.")
+    parser.add_argument("--gpu-ids", type=int, nargs="+", default=None,
+                        help="GPU IDs to use (relative to visible devices).")
+    parser.add_argument("--mp-start-method", type=str, default="spawn",
+                        choices=["spawn", "fork", "forkserver"],
+                        help="Multiprocessing start method for parallel fold training.")
     return parser.parse_args()
 
 
@@ -61,6 +70,96 @@ def resolve_param(cli_value, metadata, key):
     raise ValueError(
         "Missing required parameter '{}' both from CLI and metadata.json".format(key)
     )
+
+
+def resolve_devices(args):
+    if args.gpu_ids is not None and len(args.gpu_ids) > 0:
+        if not torch.cuda.is_available():
+            raise RuntimeError("Requested --gpu-ids but CUDA is not available.")
+
+        max_gpu = torch.cuda.device_count() - 1
+        for gpu_id in args.gpu_ids:
+            if gpu_id < 0 or gpu_id > max_gpu:
+                raise ValueError(
+                    "Invalid GPU id {}. Visible CUDA devices: 0..{}".format(gpu_id, max_gpu)
+                )
+        return ["cuda:{}".format(gpu_id) for gpu_id in args.gpu_ids]
+
+    if torch.cuda.is_available():
+        if args.parallel_folds:
+            return ["cuda:{}".format(i) for i in range(torch.cuda.device_count())]
+        return ["cuda:0"]
+
+    return ["cpu"]
+
+
+def split_folds_round_robin(fold_ids, n_groups):
+    groups = [[] for _ in range(n_groups)]
+    for idx, fold_id in enumerate(fold_ids):
+        groups[idx % n_groups].append(fold_id)
+    return [group for group in groups if group]
+
+
+def train_split_subset(split_ids, cfg, device):
+    device_obj = torch.device(device)
+    if device_obj.type == "cuda":
+        torch.cuda.set_device(device_obj.index if device_obj.index is not None else 0)
+
+    criterion = torch.nn.NLLLoss()
+    dataset_cv_splits = getcross_validation_split_from_cache(
+        cache_dir=cfg["cache_dir"],
+        n_folds=cfg["n_folds"],
+        batch_size=cfg["batch_size"],
+        seed=cfg["seed"],
+        shuffle=True,
+        num_workers=0,
+    )
+
+    for split_id in split_ids:
+        loader_train, loader_test, loader_valid = dataset_cv_splits[split_id]
+
+        model = MRGNN(
+            in_channels=cfg["in_channels"],
+            out_channels=cfg["n_units"],
+            n_class=cfg["n_classes"],
+            drop_prob=cfg["drop_prob"],
+            max_k=cfg["max_k"],
+            output=cfg["output"],
+            device=device_obj,
+        ).to(device_obj)
+
+        model_impl = modelImplementation_GraphBinClassifier(
+            model, cfg["lr"], criterion, device_obj
+        ).to(device_obj)
+        model_impl.set_optimizer(weight_decay=cfg["weight_decay"])
+        model_impl.train_test_model_readout(
+            split_id,
+            loader_train,
+            loader_test,
+            loader_valid,
+            cfg["n_epochs"],
+            cfg["test_epoch"],
+            cfg["test_name"],
+            cfg["training_log_dir"],
+        )
+
+        if device_obj.type == "cuda":
+            torch.cuda.empty_cache()
+
+
+def run_worker(worker_id, device, split_ids, cfg):
+    try:
+        print(
+            "[worker {}] device={} | assigned splits={}".format(
+                worker_id, device, split_ids
+            )
+        )
+        train_split_subset(split_ids=split_ids, cfg=cfg, device=device)
+        print("[worker {}] completed.".format(worker_id))
+    except Exception as exc:
+        print("[worker {}] failed: {}".format(worker_id, exc))
+        traceback.print_exc()
+        raise
 
 
 def main():
@@ -116,45 +215,62 @@ def main():
         },
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    criterion = torch.nn.NLLLoss()
+    devices = resolve_devices(args)
+    all_split_ids = list(range(args.n_folds))
+    cfg = {
+        "cache_dir": args.cache_dir,
+        "n_folds": args.n_folds,
+        "batch_size": args.batch_size,
+        "seed": args.seed,
+        "in_channels": in_channels,
+        "n_units": n_units,
+        "n_classes": n_classes,
+        "drop_prob": args.drop_prob,
+        "max_k": max_k,
+        "output": args.output,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "n_epochs": args.n_epochs,
+        "test_epoch": args.test_epoch,
+        "test_name": test_name,
+        "training_log_dir": training_log_dir,
+    }
 
-    dataset_cv_splits = getcross_validation_split_from_cache(
-        cache_dir=args.cache_dir,
-        n_folds=args.n_folds,
-        batch_size=args.batch_size,
-        seed=args.seed,
-        shuffle=True,
-        num_workers=0,
-    )
+    if args.parallel_folds and len(devices) > 1:
+        split_groups = split_folds_round_robin(all_split_ids, len(devices))
+        ctx = mp.get_context(args.mp_start_method)
+        workers = []
 
-    for split_id, split in enumerate(dataset_cv_splits):
-        loader_train = split[0]
-        loader_test = split[1]
-        loader_valid = split[2]
+        for worker_id, split_ids in enumerate(split_groups):
+            device = devices[worker_id]
+            p = ctx.Process(
+                target=run_worker,
+                args=(worker_id, device, split_ids, cfg),
+            )
+            p.start()
+            workers.append((p, worker_id, device, split_ids))
 
-        model = MRGNN(
-            in_channels=in_channels,
-            out_channels=n_units,
-            n_class=n_classes,
-            drop_prob=args.drop_prob,
-            max_k=max_k,
-            output=args.output,
-        ).to(device)
+        failed = []
+        for proc, worker_id, device, split_ids in workers:
+            proc.join()
+            if proc.exitcode != 0:
+                failed.append((worker_id, device, split_ids, proc.exitcode))
 
-        model_impl = modelImplementation_GraphBinClassifier(
-            model, args.lr, criterion, device
-        ).to(device)
-        model_impl.set_optimizer(weight_decay=args.weight_decay)
-        model_impl.train_test_model_readout(
-            split_id,
-            loader_train,
-            loader_test,
-            loader_valid,
-            args.n_epochs,
-            args.test_epoch,
-            test_name,
-            training_log_dir,
+        if failed:
+            raise RuntimeError(
+                "Parallel training failed for workers: {}".format(failed)
+            )
+    else:
+        if args.parallel_folds and len(devices) <= 1:
+            print(
+                "parallel_folds requested, but only one device available ({}). "
+                "Falling back to sequential folds.".format(devices[0])
+            )
+        run_worker(
+            worker_id=0,
+            device=devices[0],
+            split_ids=all_split_ids,
+            cfg=cfg,
         )
 
 
