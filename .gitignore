@@ -8,3 +8,9 @@ Dataset/
 build/
 benchmark_results/
 __pycache__/
+*.sif
+*.simg
+logs/
+.vscode/
+docs/
+test_log/
