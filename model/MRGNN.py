@@ -1,16 +1,12 @@
 import torch
 import torch.nn.functional as F
-torch.set_printoptions(profile="full")
-from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp, global_add_pool as gadd, global_max_pool as gmin
-try:
-    from torch_geometric.utils import get_laplacian
-except ImportError:
-    # Backward compatibility with very old PyG releases.
-    from torch_geometric.utils.get_laplacian import get_laplacian
+from torch_geometric.nn import global_mean_pool as gap, global_max_pool as gmp, global_add_pool as gadd
+from torch_geometric.utils import get_laplacian
 from math import floor
 from utils.Linear_masked_weight import Linear_masked_weight
 from torch.nn.utils import spectral_norm
 
+torch.set_printoptions(profile="full")
 class MRGNN(torch.nn.Module):
     def __init__(self,in_channels, out_channels , n_class=2, drop_prob=0.5, max_k=3, output=None,
                  reservoir_act_fun = lambda x: x,  device=None):
