@@ -1,0 +1,81 @@
+Bootstrap: docker
+From: nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+%labels
+    Author aidin
+    Project MRGNN
+    Description "MRGNN container with CUDA, OpenMP, OpenMPI, mpi4py, PyTorch, PyG"
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    export PIP_ROOT_USER_ACTION=ignore
+    export PIP_NO_CACHE_DIR=1
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        python3 \
+        python3-dev \
+        python3-pip \
+        python3-venv \
+        build-essential \
+        gcc \
+        g++ \
+        make \
+        cmake \
+        git \
+        curl \
+        wget \
+        ca-certificates \
+        libopenmpi-dev \
+        openmpi-bin \
+        libgomp1
+    rm -rf /var/lib/apt/lists/*
+    ln -sf /usr/bin/python3 /usr/bin/python
+
+    python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+    # PyTorch GPU stack (CUDA 12.1)
+    pip install --no-cache-dir \
+        torch==2.5.1 \
+        torchvision==0.20.1 \
+        torchaudio==2.5.1 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+    # PyG extension wheels compatible with torch 2.5.1 + cu121
+    pip install --no-cache-dir \
+        pyg_lib \
+        torch_scatter \
+        torch_sparse \
+        torch_cluster \
+        torch_spline_conv \
+        -f https://data.pyg.org/whl/torch-2.5.1+cu121.html
+
+    pip install --no-cache-dir \
+        torch-geometric \
+        mpi4py \
+        numpy \
+        scipy \
+        pandas \
+        networkx \
+        scikit-learn
+    rm -rf /root/.cache/pip
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export OMP_PROC_BIND=spread
+    export OMP_PLACES=cores
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+%runscript
+    exec /bin/bash "$@"
+
+%help
+    MRGNN container including:
+    - CUDA-enabled PyTorch
+    - PyTorch Geometric (PyG) + required extension wheels
+    - OpenMPI + mpi4py
+    - OpenMP runtime/toolchain
+
+    Typical usage on HPC (Singularity):
+      singularity exec --nv --bind /path/to/MRGNN:/workspace mrgnn_gpu_openmp_mpi.sif \
+        python /workspace/benchmarks/benchmark_omp_preprocess_threads.py --help
