@@ -11,12 +11,6 @@ Paper: [Multiresolution Reservoir Graph Neural Network](https://ieeexplore.ieee.
 
 ## Quick setup
 
-Use your environment/container with:
-
-- `torch`
-- `torch_geometric`
-- `mpi4py`
-
 Main files:
 
 - `Reservoir_dataset_creation/mpi_reservoir_cache_preprocess.py`
