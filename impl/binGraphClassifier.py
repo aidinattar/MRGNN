@@ -1,15 +1,10 @@
 import torch
-import torch.nn.functional as F
 import os
-import sys
 import datetime
 import time
-import numpy as np
-from sklearn.svm import LinearSVC
-from sklearn.preprocessing import StandardScaler
 
-predict_fn = lambda output: output.max(1, keepdim=True)[1].detach().cpu()
-
+def predict_fn(output):
+    return output.max(1, keepdim=True)[1].detach().cpu()
 
 def prepare_log_files(test_name, log_dir):
     train_log = open(os.path.join(log_dir, (test_name + "_train")), 'w+')
