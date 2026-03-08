@@ -120,18 +120,23 @@ class MRGNN(torch.nn.Module):
         A_data = [1] * A_rows.shape[0]
         v_index = torch.FloatTensor(A_data).to(self.device)
         A_shape = [X.shape[0], X.shape[0]]
-        A = torch.sparse.FloatTensor(adjacency_indexes, v_index, torch.Size(A_shape)).to_dense()
+        
+        A_sparse = torch.sparse_coo_tensor(
+            adjacency_indexes, 
+            v_index, 
+            torch.Size(A_shape)
+        ).to(X.device)
 
         H = [X]
 
         xhi_layer_i = X
         for i in range(k - 1):
-            xhi_layer_i = tanh(torch.mm(A, xhi_layer_i))
+            xhi_layer_i = tanh(torch.sparse.mm(A_sparse, xhi_layer_i))
             H.append(xhi_layer_i)
 
         H = self.lin(torch.cat(H, dim=1), self.xhi_layer_mask)
 
-        data.reservoir = H
+        data.reservoir = H.clone().detach().to_dense()
 
         return data
 
@@ -172,6 +177,7 @@ class MRGNN(torch.nn.Module):
             H.append(xhi_layer_i)
 
         H = self.lin(torch.cat(H, dim=1), self.xhi_layer_mask)
+        
         data.reservoir = H
 
         return data
@@ -187,16 +193,20 @@ class MRGNN(torch.nn.Module):
 
         #compute Laplacian
         L_edge_index, L_values = get_laplacian(data.edge_index, normalization="sym")
-        L = torch.sparse.FloatTensor(L_edge_index, L_values, torch.Size([X.shape[0], X.shape[0]])).to_dense()
+        L_sparse = torch.sparse_coo_tensor(
+            L_edge_index, 
+            L_values, 
+            torch.Size([X.shape[0], X.shape[0]])
+        ).to(X.device)
 
         H = [X]
         xhi_layer_i=X
         for i in range(k - 1):
-            xhi_layer_i = tanh(torch.mm(L, xhi_layer_i))
+            xhi_layer_i = tanh(torch.sparse.mm(L_sparse, xhi_layer_i))
             H.append(xhi_layer_i)
 
         H = self.lin(torch.cat(H, dim=1), self.xhi_layer_mask)
-        data.reservoir = H
+        data.reservoir = H.clone().detach().to_dense()
 
         return data
 
@@ -210,6 +220,11 @@ class MRGNN(torch.nn.Module):
 
         data.x = data.x[:, 1:]
         return self.get_TANH_resevoir_L(data)
+
+    def get_TANH_resevoir_D_PROTEINS(self,data):
+
+        data.x = data.x[:, 1:]
+        return self.get_TANH_resevoir_D(data)
 
 
     def readout_fw(self, data):

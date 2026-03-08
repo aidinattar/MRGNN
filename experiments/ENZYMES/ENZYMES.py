@@ -35,7 +35,7 @@ if __name__ == '__main__':
     max_k_list = [3, 4, 5, 6]
     output_list = ["funnel", "restricted_funnel", "one_layer"]
     aggregator = 'concat'
-    adjacency_matrix_list = ['A', 'L']
+    adjacency_matrix_list = ['D', 'A', 'L']
 
     reservoir_augmented_dataset_root = '~/Dataset/Reservoir_TANH_Dataset/'
 
@@ -72,7 +72,7 @@ if __name__ == '__main__':
 
         training_log_dir = os.path.join("./test_log/", test_name)
         
-        # FIX RACE CONDITION: exist_ok=True avoids crash it two ranks
+        # FIX RACE CONDITION: exist_ok=True avoids crash if two ranks
         # try to open the directory "./test_log/" at the same time.
         os.makedirs(training_log_dir, exist_ok=True)
 

@@ -1,3 +1,0 @@
-test_name: run_0_MRGNN_data-ENZYMES_adjacency_matrix-A_nFold-10_lr-0.001_drop_prob-0.3_weight-decay-0.005_batchSize-16_nHidden-50_output-restricted_funnel_maxK-3--split-0 
-2026-03-05 21:24:45.211054
-#epoch 	 split 	 loss 	 acc 	 avg_epoch_time 	 avg_epoch_cost 

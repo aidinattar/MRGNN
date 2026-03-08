@@ -5,7 +5,7 @@ from Reservoir_dataset_creation.ReservoirExtraction import Create_Reservoir_Data
 
 
 run=[0,1,2,3,4]
-adj_mat_list=['L'] #['A','L']
+adj_mat_list = ['D','A','L']
 
 
 if __name__ == '__main__':
