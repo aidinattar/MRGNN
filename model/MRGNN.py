@@ -250,15 +250,13 @@ class MRGNN(torch.nn.Module):
             assert False, "error in output stage"
 
 
-
-            
-
     def one_layer_out(self,H):
 
         x = self.bn_out(H)
         x = self.out_fun(self.lin1(x))
 
         return x
+
 
     def funnel_output(self,H):
 
@@ -270,6 +268,7 @@ class MRGNN(torch.nn.Module):
         x = self.out_fun(self.lin3(x))
 
         return x
+
 
     def restricted_funnel_output(self, H):
 
