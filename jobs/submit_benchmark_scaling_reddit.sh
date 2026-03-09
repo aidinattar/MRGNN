@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 if ! command -v sbatch >/dev/null 2>&1; then
-  echo "ERROR: sbatch non trovato nel PATH."
+  echo "ERROR: sbatch not found in PATH."
   exit 1
 fi
 
@@ -17,10 +17,14 @@ SIF_PATH="${SIF_PATH:-/scratch/$USER/images/mrgnn_gpu_openmp_mpi.sif}"
 PARTITION="${PARTITION:-allgroups}"
 MAX_K="${MAX_K:-8}"
 ADJACENCY_MATRIX="${ADJACENCY_MATRIX:-D}"
-NUM_GRAPHS_OMP="${NUM_GRAPHS_OMP:-4096}"
-NUM_GRAPHS_MPI="${NUM_GRAPHS_MPI:-4096}"
-REPEATS_OMP="${REPEATS_OMP:-3}"
-REPEATS_MPI="${REPEATS_MPI:-3}"
+NUM_GRAPHS_OMP="${NUM_GRAPHS_OMP:-11929}"
+NUM_GRAPHS_MPI="${NUM_GRAPHS_MPI:-11929}"
+REPEATS_OMP="${REPEATS_OMP:-30}"
+REPEATS_MPI="${REPEATS_MPI:-30}"
+TIME_OMP="${TIME_OMP:-02:00:00}"
+TIME_MPI="${TIME_MPI:-01:00:00}"
+MEM_OMP="${MEM_OMP:-12G}"
+MEM_MPI="${MEM_MPI:-24G}"
 
 # Isolate MPI scaling by default: 1 OMP thread per rank.
 MPI_OMP_THREADS="${MPI_OMP_THREADS:-1}"
@@ -46,11 +50,11 @@ for t in "${OMP_THREADS_LIST[@]}"; do
     --output="logs/%x_%j.out" \
     --error="logs/%x_%j.err" \
     --partition="${PARTITION}" \
-    --time="01:30:00" \
+    --time="${TIME_OMP}" \
     --nodes=1 \
     --ntasks=1 \
     --cpus-per-task="${t}" \
-    --mem="24G" \
+    --mem="${MEM_OMP}" \
     --mail-user="aidin.attar@phd.unipd.it" \
     --mail-type="END,FAIL" \
     --wrap="set -euo pipefail; \
@@ -85,11 +89,11 @@ for n in "${MPI_RANKS_LIST[@]}"; do
     --output="logs/%x_%j.out" \
     --error="logs/%x_%j.err" \
     --partition="${PARTITION}" \
-    --time="01:30:00" \
+    --time="${TIME_MPI}" \
     --nodes=1 \
     --ntasks=1 \
     --cpus-per-task="${mpi_cpus}" \
-    --mem="32G" \
+    --mem="${MEM_MPI}" \
     --mail-user="aidin.attar@phd.unipd.it" \
     --mail-type="END,FAIL" \
     --wrap="set -euo pipefail; \
