@@ -16,6 +16,7 @@ SIF_PATH="${SIF_PATH:-/scratch/$USER/images/mrgnn_gpu_openmp_mpi.sif}"
 
 PARTITION="${PARTITION:-allgroups}"
 MAX_K="${MAX_K:-8}"
+ADJACENCY_MATRIX="${ADJACENCY_MATRIX:-D}"
 NUM_GRAPHS_OMP="${NUM_GRAPHS_OMP:-4096}"
 NUM_GRAPHS_MPI="${NUM_GRAPHS_MPI:-4096}"
 REPEATS_OMP="${REPEATS_OMP:-3}"
@@ -41,7 +42,7 @@ echo "Submitting OpenMP scaling jobs for ${DATASET_NAME}..."
 OMP_JOB_IDS=()
 for t in "${OMP_THREADS_LIST[@]}"; do
   job_id="$(sbatch --parsable \
-    --job-name="bm_omp_${DATASET_TAG}_t${t}" \
+    --job-name="bm_omp_${DATASET_TAG}_${ADJACENCY_MATRIX}_t${t}" \
     --output="logs/%x_%j.out" \
     --error="logs/%x_%j.err" \
     --partition="${PARTITION}" \
@@ -61,13 +62,14 @@ for t in "${OMP_THREADS_LIST[@]}"; do
         python /workspace/benchmarks/benchmark_omp_preprocess_threads.py \
           --dataset-root '${DATASET_ROOT}' \
           --dataset-name '${DATASET_NAME}' \
+          --adjacency-matrix '${ADJACENCY_MATRIX}' \
           --max-k ${MAX_K} \
           --threads ${t} \
           --num-graphs ${NUM_GRAPHS_OMP} \
           --repeats ${REPEATS_OMP} \
           --select largest \
           ${NODE_ATTR_FLAG} \
-          --output-json /workspace/benchmark_results/hpc/${DATASET_TAG}_omp_t${t}.json" \
+          --output-json /workspace/benchmark_results/hpc/${DATASET_TAG}_${ADJACENCY_MATRIX}_omp_t${t}.json" \
   )"
   OMP_JOB_IDS+=("${job_id}")
   echo "  thread ${t} -> job ${job_id}"
@@ -79,7 +81,7 @@ MPI_JOB_IDS=()
 for n in "${MPI_RANKS_LIST[@]}"; do
   mpi_cpus="$(( n * MPI_OMP_THREADS ))"
   job_id="$(sbatch --parsable \
-    --job-name="bm_mpi_${DATASET_TAG}_n${n}" \
+    --job-name="bm_mpi_${DATASET_TAG}_${ADJACENCY_MATRIX}_n${n}" \
     --output="logs/%x_%j.out" \
     --error="logs/%x_%j.err" \
     --partition="${PARTITION}" \
@@ -102,13 +104,14 @@ for n in "${MPI_RANKS_LIST[@]}"; do
         mpirun -np ${n} python /workspace/benchmarks/benchmark_mpi_preprocess_ranks.py \
           --dataset-root '${DATASET_ROOT}' \
           --dataset-name '${DATASET_NAME}' \
+          --adjacency-matrix '${ADJACENCY_MATRIX}' \
           --max-k ${MAX_K} \
           --num-graphs ${NUM_GRAPHS_MPI} \
           --repeats ${REPEATS_MPI} \
           --select largest \
           ${NODE_ATTR_FLAG} \
           --omp-threads ${MPI_OMP_THREADS} \
-          --output-json /workspace/benchmark_results/hpc/${DATASET_TAG}_mpi_n${n}.json" \
+          --output-json /workspace/benchmark_results/hpc/${DATASET_TAG}_${ADJACENCY_MATRIX}_mpi_n${n}.json" \
   )"
   MPI_JOB_IDS+=("${job_id}")
   echo "  ranks ${n} -> job ${job_id}"

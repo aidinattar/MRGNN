@@ -6,6 +6,7 @@ import time
 
 import numpy as np
 import torch
+from torch_geometric.utils import get_laplacian
 
 try:
     from mpi4py import MPI
@@ -32,6 +33,9 @@ def parse_args():
                         help="TUDataset name.")
     parser.add_argument("--max-k", type=int, required=True,
                         help="Number of multi-hop steps (including hop-0).")
+    parser.add_argument("--adjacency-matrix", type=str, choices=["A", "L", "D", "GCN"],
+                        default="GCN",
+                        help="Operator mode to benchmark.")
     parser.add_argument("--num-graphs", type=int, default=2048,
                         help="How many graphs to benchmark.")
     parser.add_argument("--repeats", type=int, default=3,
@@ -67,6 +71,107 @@ def maybe_prepare_x(data):
     return data.x.to(torch.float32)
 
 
+def coo_to_csr(edge_index, edge_weight, num_nodes):
+    row = np.asarray(edge_index[0], dtype=np.int64)
+    col = np.asarray(edge_index[1], dtype=np.int64)
+    val = np.asarray(edge_weight, dtype=np.float32)
+
+    keys = row * np.int64(num_nodes) + col
+    order = np.argsort(keys, kind="mergesort")
+    row = row[order]
+    col = col[order]
+    val = val[order]
+    keys = keys[order]
+
+    if keys.shape[0] == 0:
+        return (
+            np.zeros(num_nodes + 1, dtype=np.int64),
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.float32),
+        )
+
+    unique_mask = np.ones(keys.shape[0], dtype=bool)
+    unique_mask[1:] = keys[1:] != keys[:-1]
+    unique_idx = np.nonzero(unique_mask)[0]
+
+    row_u = row[unique_idx]
+    col_u = col[unique_idx]
+    val_u = np.add.reduceat(val, unique_idx).astype(np.float32, copy=False)
+
+    row_ptr = np.zeros(num_nodes + 1, dtype=np.int64)
+    np.add.at(row_ptr, row_u + 1, 1)
+    np.cumsum(row_ptr, out=row_ptr)
+    return (
+        np.ascontiguousarray(row_ptr, dtype=np.int64),
+        np.ascontiguousarray(col_u, dtype=np.int64),
+        np.ascontiguousarray(val_u, dtype=np.float32),
+    )
+
+
+def preprocess_with_operator(omp, data, x_np, max_k, adjacency_matrix):
+    edge_index = data.edge_index.detach().cpu().numpy().astype(np.int64, copy=False)
+    num_nodes = int(data.num_nodes)
+
+    if adjacency_matrix == "GCN":
+        omp.preprocess_graph(
+            edge_index=edge_index,
+            x0=x_np,
+            num_nodes=num_nodes,
+            max_k=max_k,
+            add_self_loops=True,
+            apply_tanh=True,
+        )
+        return
+
+    if adjacency_matrix == "A":
+        row_ptr, col_idx = omp.build_csr(
+            edge_index=edge_index,
+            num_nodes=num_nodes,
+            add_self_loops=False,
+        )
+        values = np.ones(col_idx.shape[0], dtype=np.float32)
+        omp.multihop_operator(
+            row_ptr=row_ptr,
+            col_idx=col_idx,
+            values=values,
+            x0=x_np,
+            max_k=max_k,
+            operator_mode="spmm",
+            apply_tanh=True,
+        )
+        return
+
+    L_edge_index, L_values = get_laplacian(data.edge_index, normalization="sym")
+    row_ptr, col_idx, values = coo_to_csr(
+        edge_index=L_edge_index.detach().cpu().numpy().astype(np.int64, copy=False),
+        edge_weight=L_values.detach().cpu().numpy().astype(np.float32, copy=False),
+        num_nodes=num_nodes,
+    )
+
+    if adjacency_matrix == "L":
+        omp.multihop_operator(
+            row_ptr=row_ptr,
+            col_idx=col_idx,
+            values=values,
+            x0=x_np,
+            max_k=max_k,
+            operator_mode="spmm",
+            apply_tanh=True,
+        )
+        return
+
+    # D fairing
+    omp.multihop_operator(
+        row_ptr=row_ptr,
+        col_idx=col_idx,
+        values=values,
+        x0=x_np,
+        max_k=max_k,
+        operator_mode="fairing",
+        apply_tanh=False,
+    )
+
+
 def pick_graph_ids(dataset, num_graphs, mode, seed):
     num_graphs = min(num_graphs, len(dataset))
     if mode == "random":
@@ -80,7 +185,7 @@ def pick_graph_ids(dataset, num_graphs, mode, seed):
     return [idx for idx, _ in indexed_sizes[:num_graphs]]
 
 
-def run_once(comm, dataset, graph_ids, max_k, omp):
+def run_once(comm, dataset, graph_ids, max_k, omp, adjacency_matrix):
     rank = comm.Get_rank()
     world = comm.Get_size()
 
@@ -96,13 +201,12 @@ def run_once(comm, dataset, graph_ids, max_k, omp):
         edge_index = data.edge_index.detach().cpu().numpy().astype(np.int64, copy=False)
         local_nodes += int(data.num_nodes)
         local_edges += int(edge_index.shape[1])
-        omp.preprocess_graph(
-            edge_index=edge_index,
-            x0=x,
-            num_nodes=int(data.num_nodes),
+        preprocess_with_operator(
+            omp=omp,
+            data=data,
+            x_np=x,
             max_k=max_k,
-            add_self_loops=True,
-            apply_tanh=True,
+            adjacency_matrix=adjacency_matrix,
         )
     elapsed = time.perf_counter() - start
 
@@ -155,8 +259,8 @@ def main():
         print("Dataset: {} | graphs: {} | benchmark subset: {}".format(
             args.dataset_name, len(dataset), len(graph_ids)
         ))
-        print("MPI ranks={} | OMP threads/rank={} | max_k={} | repeats={}".format(
-            world, args.omp_threads, args.max_k, args.repeats
+        print("MPI ranks={} | OMP threads/rank={} | op={} | max_k={} | repeats={}".format(
+            world, args.omp_threads, args.adjacency_matrix, args.max_k, args.repeats
         ))
         print("-" * 64)
 
@@ -170,6 +274,7 @@ def main():
             graph_ids=graph_ids,
             max_k=args.max_k,
             omp=omp,
+            adjacency_matrix=args.adjacency_matrix,
         )
         if rank == 0:
             timings.append(wallclock)
@@ -190,6 +295,7 @@ def main():
         "dataset_name": args.dataset_name,
         "dataset_root": os.path.expanduser(args.dataset_root),
         "max_k": args.max_k,
+        "adjacency_matrix": args.adjacency_matrix,
         "num_graphs": len(graph_ids),
         "repeats": args.repeats,
         "selection": args.select,

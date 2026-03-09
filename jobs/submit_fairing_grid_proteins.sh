@@ -8,7 +8,7 @@ PREPROCESS_JOB="${SCRIPT_DIR}/preprocess_mpi_fairing_grid_proteins.sbatch"
 TRAIN_JOB="${SCRIPT_DIR}/train_from_cache_fairing_grid_proteins.sbatch"
 
 if ! command -v sbatch >/dev/null 2>&1; then
-  echo "ERROR: sbatch non trovato nel PATH."
+  echo "ERROR: sbatch not found in PATH."
   exit 1
 fi
 
