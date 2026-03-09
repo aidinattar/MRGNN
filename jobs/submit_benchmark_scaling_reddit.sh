@@ -83,7 +83,6 @@ echo
 echo "Submitting MPI scaling jobs for ${DATASET_NAME}..."
 MPI_JOB_IDS=()
 for n in "${MPI_RANKS_LIST[@]}"; do
-  mpi_cpus="$(( n * MPI_OMP_THREADS ))"
   job_id="$(sbatch --parsable \
     --job-name="bm_mpi_${DATASET_TAG}_${ADJACENCY_MATRIX}_n${n}" \
     --output="logs/%x_%j.out" \
@@ -91,8 +90,8 @@ for n in "${MPI_RANKS_LIST[@]}"; do
     --partition="${PARTITION}" \
     --time="${TIME_MPI}" \
     --nodes=1 \
-    --ntasks=1 \
-    --cpus-per-task="${mpi_cpus}" \
+    --ntasks="${n}" \
+    --cpus-per-task="${MPI_OMP_THREADS}" \
     --mem="${MEM_MPI}" \
     --mail-user="aidin.attar@phd.unipd.it" \
     --mail-type="END,FAIL" \
