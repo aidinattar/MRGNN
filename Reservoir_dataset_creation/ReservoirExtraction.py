@@ -48,6 +48,12 @@ def Create_Reservoir_Dataset(native_dataset_path, native_dataset_name, n_units, 
                     name=native_dataset_name,
                     pre_transform=model.get_TANH_resevoir_L_PROTEINS,
                     use_node_attr=use_node_attr)
+            elif adjacency_matrix == 'D':
+                TUDataset(
+                    root=os.path.join(reservoir_augmented_dataset_root, current_reservoir_augmented_dataset_name),
+                    name=native_dataset_name,
+                    pre_transform=model.get_TANH_resevoir_D_PROTEINS,
+                    use_node_attr=use_node_attr)
 
         else:
             if adjacency_matrix == 'A':
@@ -62,4 +68,10 @@ def Create_Reservoir_Dataset(native_dataset_path, native_dataset_name, n_units, 
                     root=os.path.join(reservoir_augmented_dataset_root, current_reservoir_augmented_dataset_name),
                     name=native_dataset_name,
                     pre_transform=model.get_TANH_resevoir_L,
+                    use_node_attr=use_node_attr)
+            elif adjacency_matrix == 'D':
+                TUDataset(
+                    root=os.path.join(reservoir_augmented_dataset_root, current_reservoir_augmented_dataset_name),
+                    name=native_dataset_name,
+                    pre_transform=model.get_TANH_resevoir_D,
                     use_node_attr=use_node_attr)

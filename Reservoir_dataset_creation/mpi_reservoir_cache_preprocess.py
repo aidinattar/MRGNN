@@ -40,8 +40,8 @@ def parse_args():
                         help="Number of classes (only used for model shape compatibility).")
     parser.add_argument("--max-k", type=int, required=True,
                         help="Maximum multiresolution hop count.")
-    parser.add_argument("--adjacency-matrix", type=str, choices=["A", "L"], required=True,
-                        help="A for adjacency reservoir, L for Laplacian reservoir.")
+    parser.add_argument("--adjacency-matrix", type=str, choices=["A", "L", "D"], required=True,
+                        help="Reservoir operator: A (adjacency), L (Laplacian), D (fairing).")
     parser.add_argument("--runs", type=int, nargs="+", default=[0],
                         help="Run IDs used to seed reservoir initialization.")
     parser.add_argument("--use-node-attr", action="store_true",
@@ -77,11 +77,19 @@ def select_transform(model, dataset_name, adjacency_matrix):
     if dataset_name == "PROTEINS":
         if adjacency_matrix == "A":
             return model.get_TANH_resevoir_A_PROTEINS
-        return model.get_TANH_resevoir_L_PROTEINS
+        if adjacency_matrix == "L":
+            return model.get_TANH_resevoir_L_PROTEINS
+        if adjacency_matrix == "D":
+            return model.get_TANH_resevoir_D_PROTEINS
+        raise ValueError("Unsupported adjacency matrix '{}'".format(adjacency_matrix))
 
     if adjacency_matrix == "A":
         return model.get_TANH_resevoir_A
-    return model.get_TANH_resevoir_L
+    if adjacency_matrix == "L":
+        return model.get_TANH_resevoir_L
+    if adjacency_matrix == "D":
+        return model.get_TANH_resevoir_D
+    raise ValueError("Unsupported adjacency matrix '{}'".format(adjacency_matrix))
 
 
 def load_native_dataset(args):

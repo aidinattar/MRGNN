@@ -21,7 +21,10 @@ def compile_openmp_library(
         output_path = DEFAULT_LIB_PATH
     output_path = os.path.abspath(output_path)
     if os.path.exists(output_path) and not force:
-        return output_path
+        src_mtime = os.path.getmtime(CPP_SOURCE)
+        out_mtime = os.path.getmtime(output_path)
+        if out_mtime >= src_mtime:
+            return output_path
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     flags = ["-O3", "-std=c++17", "-fopenmp", "-shared", "-fPIC"]
@@ -110,6 +113,20 @@ class OMPGraphPreprocessor(object):
         ]
         self.lib.csr_multihop_diffusion.restype = ctypes.c_int
 
+        self.lib.csr_multihop_diffusion_mode.argtypes = [
+            ctypes.c_int64,
+            ctypes.c_int64,
+            ctypes.c_int64,
+            c_int64_p,
+            c_int64_p,
+            c_float_p,
+            c_float_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            c_float_p,
+        ]
+        self.lib.csr_multihop_diffusion_mode.restype = ctypes.c_int
+
     def set_threads(self, n_threads):
         self.lib.set_omp_threads(int(n_threads))
 
@@ -167,6 +184,26 @@ class OMPGraphPreprocessor(object):
         return values
 
     def multihop_diffusion(self, row_ptr, col_idx, values, x0, max_k, apply_tanh=True):
+        return self.multihop_operator(
+            row_ptr=row_ptr,
+            col_idx=col_idx,
+            values=values,
+            x0=x0,
+            max_k=max_k,
+            operator_mode="spmm",
+            apply_tanh=apply_tanh,
+        )
+
+    def multihop_operator(
+        self,
+        row_ptr,
+        col_idx,
+        values,
+        x0,
+        max_k,
+        operator_mode="spmm",
+        apply_tanh=True,
+    ):
         row_ptr = _as_int64_array(row_ptr, "row_ptr")
         col_idx = _as_int64_array(col_idx, "col_idx")
         values = np.asarray(values, dtype=np.float32)
@@ -184,7 +221,14 @@ class OMPGraphPreprocessor(object):
         out = np.empty((max_k, num_nodes, feat_dim), dtype=np.float32)
         out_flat = np.ascontiguousarray(out.reshape(-1))
 
-        ret = self.lib.csr_multihop_diffusion(
+        if operator_mode == "spmm":
+            mode = 0
+        elif operator_mode == "fairing":
+            mode = 1
+        else:
+            raise ValueError("Unsupported operator_mode: {}".format(operator_mode))
+
+        ret = self.lib.csr_multihop_diffusion_mode(
             num_nodes,
             feat_dim,
             max_k,
@@ -192,11 +236,14 @@ class OMPGraphPreprocessor(object):
             col_idx,
             values,
             x0.reshape(-1),
+            mode,
             int(bool(apply_tanh)),
             out_flat,
         )
         if ret != 0:
-            raise RuntimeError("csr_multihop_diffusion failed with error code {}".format(ret))
+            raise RuntimeError(
+                "csr_multihop_diffusion_mode failed with error code {}".format(ret)
+            )
 
         return out_flat.reshape(max_k, num_nodes, feat_dim)
 

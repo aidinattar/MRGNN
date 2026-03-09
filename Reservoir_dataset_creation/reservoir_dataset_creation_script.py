@@ -5,7 +5,7 @@ from Reservoir_dataset_creation.ReservoirExtraction import Create_Reservoir_Data
 
 
 run=[0,1,2,3,4]
-adj_mat_list=['A','L']
+adj_mat_list=['A','L','D']
 
 
 if __name__ == '__main__':
@@ -168,5 +168,4 @@ if __name__ == '__main__':
                                          run=run,
                                          adjacency_matrix=M,
                                          use_node_attr=use_node_attr)
-
 

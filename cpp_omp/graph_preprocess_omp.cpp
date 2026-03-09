@@ -9,6 +9,18 @@
 
 extern "C" {
 
+int csr_multihop_diffusion_mode(
+    int64_t num_nodes,
+    int64_t feat_dim,
+    int64_t max_k,
+    const int64_t* row_ptr,
+    const int64_t* col_idx,
+    const float* values,
+    const float* x0,
+    int mode,
+    int apply_tanh,
+    float* out_hops);
+
 void set_omp_threads(int n_threads) {
 #ifdef _OPENMP
   if (n_threads > 0) {
@@ -193,9 +205,37 @@ int csr_multihop_diffusion(
     const float* x0,
     int apply_tanh,
     float* out_hops) {
+  // Backward-compatible wrapper: standard sparse propagation (mode 0).
+  return csr_multihop_diffusion_mode(
+      num_nodes,
+      feat_dim,
+      max_k,
+      row_ptr,
+      col_idx,
+      values,
+      x0,
+      0,
+      apply_tanh,
+      out_hops);
+}
+
+int csr_multihop_diffusion_mode(
+    int64_t num_nodes,
+    int64_t feat_dim,
+    int64_t max_k,
+    const int64_t* row_ptr,
+    const int64_t* col_idx,
+    const float* values,
+    const float* x0,
+    int mode,
+    int apply_tanh,
+    float* out_hops) {
   if (num_nodes <= 0 || feat_dim <= 0 || max_k <= 0 || row_ptr == nullptr ||
       col_idx == nullptr || values == nullptr || x0 == nullptr || out_hops == nullptr) {
     return -1;
+  }
+  if (mode != 0 && mode != 1) {
+    return -2;
   }
 
   const int64_t plane = num_nodes * feat_dim;
@@ -211,26 +251,55 @@ int csr_multihop_diffusion(
   for (int64_t hop = 1; hop < max_k; ++hop) {
 #pragma omp parallel for schedule(dynamic, 32)
     for (int64_t i = 0; i < num_nodes; ++i) {
+      const float* prev_row = &prev[static_cast<size_t>(i * feat_dim)];
       float* out_row = &next[static_cast<size_t>(i * feat_dim)];
-      for (int64_t f = 0; f < feat_dim; ++f) {
-        out_row[f] = 0.0f;
-      }
 
-      for (int64_t p = row_ptr[i]; p < row_ptr[i + 1]; ++p) {
-        const int64_t j = col_idx[p];
-        if (j < 0 || j >= num_nodes) {
-          continue;
-        }
-        const float w = values[p];
-        const float* in_row = &prev[static_cast<size_t>(j * feat_dim)];
+      if (mode == 0) {
         for (int64_t f = 0; f < feat_dim; ++f) {
-          out_row[f] += w * in_row[f];
+          out_row[f] = 0.0f;
         }
-      }
 
-      if (apply_tanh) {
+        for (int64_t p = row_ptr[i]; p < row_ptr[i + 1]; ++p) {
+          const int64_t j = col_idx[p];
+          if (j < 0 || j >= num_nodes) {
+            continue;
+          }
+          const float w = values[p];
+          const float* in_row = &prev[static_cast<size_t>(j * feat_dim)];
+          for (int64_t f = 0; f < feat_dim; ++f) {
+            out_row[f] += w * in_row[f];
+          }
+        }
+
+        if (apply_tanh) {
+          for (int64_t f = 0; f < feat_dim; ++f) {
+            out_row[f] = std::tanh(out_row[f]);
+          }
+        }
+      } else {
+        // Fairing mode (mode=1): out = prev + alpha * (Op * prev), with
+        // alternating alpha values across hops.
+        const float alpha = ((hop - 1) % 2 == 0) ? -0.5f : (2.0f / 3.0f);
         for (int64_t f = 0; f < feat_dim; ++f) {
-          out_row[f] = std::tanh(out_row[f]);
+          out_row[f] = prev_row[f];
+        }
+
+        for (int64_t p = row_ptr[i]; p < row_ptr[i + 1]; ++p) {
+          const int64_t j = col_idx[p];
+          if (j < 0 || j >= num_nodes) {
+            continue;
+          }
+          const float w = alpha * values[p];
+          const float* in_row = &prev[static_cast<size_t>(j * feat_dim)];
+          for (int64_t f = 0; f < feat_dim; ++f) {
+            out_row[f] += w * in_row[f];
+          }
+        }
+
+        if (apply_tanh) {
+          for (int64_t f = 0; f < feat_dim; ++f) {
+            out_row[f] = std::tanh(out_row[f]);
+          }
         }
       }
     }

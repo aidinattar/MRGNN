@@ -19,6 +19,7 @@ else:
 sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
 from torch_geometric.datasets import TUDataset
+from torch_geometric.utils import get_laplacian
 
 from model.MRGNN import MRGNN
 from utils.omp_graph_preprocess import OMPGraphPreprocessor, compile_openmp_library
@@ -26,7 +27,7 @@ from utils.omp_graph_preprocess import OMPGraphPreprocessor, compile_openmp_libr
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="MPI + OpenMP preprocessing: CSR build, GCN normalization, multi-hop prep."
+        description="MPI + OpenMP preprocessing for cached reservoir features."
     )
     parser.add_argument("--dataset-root", type=str, required=True,
                         help="Path used by TUDataset for native dataset.")
@@ -40,6 +41,9 @@ def parse_args():
                         help="Number of classes (for model shape).")
     parser.add_argument("--max-k", type=int, required=True,
                         help="Number of multihop steps including hop-0.")
+    parser.add_argument("--adjacency-matrix", type=str, choices=["A", "L", "D", "GCN"],
+                        default="GCN",
+                        help="Operator mode: A/L/D for reservoir-compatible modes, GCN for legacy OMP_GCN.")
     parser.add_argument("--runs", type=int, nargs="+", default=[0],
                         help="Run IDs used to seed the fixed readout matrix.")
     parser.add_argument("--use-node-attr", action="store_true",
@@ -75,9 +79,13 @@ def seed_everything(seed):
     torch.manual_seed(seed)
 
 
-def build_run_cache_name(run, max_k, n_units, dataset_name):
-    return "run_{}_OMP_GCN_{}_n_units_{}_{}".format(
-        run, max_k, n_units, dataset_name
+def build_run_cache_name(run, adjacency_matrix, max_k, n_units, dataset_name):
+    if adjacency_matrix == "GCN":
+        return "run_{}_OMP_GCN_{}_n_units_{}_{}".format(
+            run, max_k, n_units, dataset_name
+        )
+    return "run_{}_TANH_RES_{}_{}_n_units_{}_{}".format(
+        run, adjacency_matrix, max_k, n_units, dataset_name
     )
 
 
@@ -116,6 +124,116 @@ def maybe_prepare_x(data, in_channels, dataset_name):
     if dataset_name == "PROTEINS" and x.shape[1] == in_channels + 1:
         x = x[:, 1:]
     return x
+
+
+def coo_to_csr(edge_index, edge_weight, num_nodes):
+    row = np.asarray(edge_index[0], dtype=np.int64)
+    col = np.asarray(edge_index[1], dtype=np.int64)
+    val = np.asarray(edge_weight, dtype=np.float32)
+
+    if row.ndim != 1 or col.ndim != 1 or val.ndim != 1:
+        raise ValueError("COO arrays must be 1D.")
+    if row.shape[0] != col.shape[0] or row.shape[0] != val.shape[0]:
+        raise ValueError("COO arrays must have same length.")
+
+    if row.shape[0] == 0:
+        return (
+            np.zeros(num_nodes + 1, dtype=np.int64),
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.float32),
+        )
+
+    keys = row * np.int64(num_nodes) + col
+    order = np.argsort(keys, kind="mergesort")
+    row = row[order]
+    col = col[order]
+    val = val[order]
+    keys = keys[order]
+
+    # Sum duplicate COO entries to match sparse-coalesced behavior.
+    unique_mask = np.ones(keys.shape[0], dtype=bool)
+    unique_mask[1:] = keys[1:] != keys[:-1]
+    unique_idx = np.nonzero(unique_mask)[0]
+
+    row_u = row[unique_idx]
+    col_u = col[unique_idx]
+    val_u = np.add.reduceat(val, unique_idx).astype(np.float32, copy=False)
+
+    row_ptr = np.zeros(num_nodes + 1, dtype=np.int64)
+    np.add.at(row_ptr, row_u + 1, 1)
+    np.cumsum(row_ptr, out=row_ptr)
+
+    return (
+        np.ascontiguousarray(row_ptr, dtype=np.int64),
+        np.ascontiguousarray(col_u, dtype=np.int64),
+        np.ascontiguousarray(val_u, dtype=np.float32),
+    )
+
+
+def preprocess_with_operator(omp, data, x_np, args):
+    num_nodes = int(data.num_nodes)
+    edge_index_np = data.edge_index.detach().cpu().numpy().astype(np.int64, copy=False)
+
+    if args.adjacency_matrix == "GCN":
+        return omp.preprocess_graph(
+            edge_index=edge_index_np,
+            x0=x_np,
+            num_nodes=num_nodes,
+            max_k=args.max_k,
+            add_self_loops=True,
+            apply_tanh=not args.no_tanh,
+        )
+
+    if args.adjacency_matrix == "A":
+        row_ptr, col_idx = omp.build_csr(
+            edge_index=edge_index_np,
+            num_nodes=num_nodes,
+            add_self_loops=False,
+        )
+        values = np.ones(col_idx.shape[0], dtype=np.float32)
+        hops = omp.multihop_operator(
+            row_ptr=row_ptr,
+            col_idx=col_idx,
+            values=values,
+            x0=x_np,
+            max_k=args.max_k,
+            operator_mode="spmm",
+            apply_tanh=not args.no_tanh,
+        )
+        return row_ptr, col_idx, values, hops
+
+    # L / D use normalized Laplacian coefficients from PyG for fidelity with MRGNN.
+    L_edge_index, L_values = get_laplacian(data.edge_index, normalization="sym")
+    L_edge_index_np = L_edge_index.detach().cpu().numpy().astype(np.int64, copy=False)
+    L_values_np = L_values.detach().cpu().numpy().astype(np.float32, copy=False)
+    row_ptr, col_idx, values = coo_to_csr(
+        edge_index=L_edge_index_np,
+        edge_weight=L_values_np,
+        num_nodes=num_nodes,
+    )
+
+    if args.adjacency_matrix == "L":
+        hops = omp.multihop_operator(
+            row_ptr=row_ptr,
+            col_idx=col_idx,
+            values=values,
+            x0=x_np,
+            max_k=args.max_k,
+            operator_mode="spmm",
+            apply_tanh=not args.no_tanh,
+        )
+    else:
+        # Fairing: alternating (I - 0.5L) / (I + 2/3 L), no tanh by default.
+        hops = omp.multihop_operator(
+            row_ptr=row_ptr,
+            col_idx=col_idx,
+            values=values,
+            x0=x_np,
+            max_k=args.max_k,
+            operator_mode="fairing",
+            apply_tanh=False,
+        )
+    return row_ptr, col_idx, values, hops
 
 
 def save_graph_cache(
@@ -176,8 +294,8 @@ def main():
 
     if rank == 0:
         print(
-            "[rank 0] OpenMP library loaded. max_threads={} requested_threads={}".format(
-                omp.max_threads(), args.omp_threads
+            "[rank 0] OpenMP library loaded. max_threads={} requested_threads={} operator={}".format(
+                omp.max_threads(), args.omp_threads, args.adjacency_matrix
             )
         )
         print("[rank 0] Loading native dataset...")
@@ -197,6 +315,7 @@ def main():
     for run in args.runs:
         run_name = build_run_cache_name(
             run=run,
+            adjacency_matrix=args.adjacency_matrix,
             max_k=args.max_k,
             n_units=args.n_units,
             dataset_name=args.dataset_name,
@@ -237,16 +356,13 @@ def main():
                 data = dataset[graph_id]
                 x = maybe_prepare_x(data, source_num_features, args.dataset_name)
                 x_np = x.detach().cpu().numpy().astype(np.float32, copy=False)
-                edge_index_np = data.edge_index.detach().cpu().numpy().astype(np.int64, copy=False)
 
                 prep_start = time.perf_counter()
-                row_ptr, col_idx, norm_values, hops = omp.preprocess_graph(
-                    edge_index=edge_index_np,
-                    x0=x_np,
-                    num_nodes=int(data.num_nodes),
-                    max_k=args.max_k,
-                    add_self_loops=True,
-                    apply_tanh=not args.no_tanh,
+                row_ptr, col_idx, norm_values, hops = preprocess_with_operator(
+                    omp=omp,
+                    data=data,
+                    x_np=x_np,
+                    args=args,
                 )
                 total_prep_time += time.perf_counter() - prep_start
 
@@ -311,7 +427,8 @@ def main():
                 "dataset_name": args.dataset_name,
                 "dataset_root": os.path.expanduser(args.dataset_root),
                 "run": run,
-                "operator": "gcn_norm_with_self_loops",
+                "operator": args.adjacency_matrix,
+                "adjacency_matrix": args.adjacency_matrix,
                 "max_k": args.max_k,
                 "n_units": args.n_units,
                 "n_classes": args.n_classes,

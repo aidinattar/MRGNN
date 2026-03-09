@@ -104,6 +104,19 @@ class MRGNN(torch.nn.Module):
         data.x = torch.ones(data.num_nodes,1)
         return data
 
+    def _build_sparse_coo(self, indices, values, shape, device):
+        indices = indices.to(device=device, dtype=torch.long)
+        if not torch.is_tensor(values):
+            values = torch.as_tensor(values, dtype=torch.float32, device=device)
+        else:
+            values = values.to(device=device, dtype=torch.float32)
+
+        if hasattr(torch, "sparse_coo_tensor"):
+            sparse = torch.sparse_coo_tensor(indices, values, torch.Size(shape), device=device)
+        else:
+            sparse = torch.sparse.FloatTensor(indices, values, torch.Size(shape)).to(device)
+        return sparse.coalesce()
+
     def get_TANH_resevoir_A(self, data):
         tanh = torch.nn.Tanh()
         if data.x is None:
@@ -115,17 +128,19 @@ class MRGNN(torch.nn.Module):
 
         # compute adjacency matrix A
         adjacency_indexes = data.edge_index
-        A_rows = adjacency_indexes[0]
-        A_data = [1] * A_rows.shape[0]
-        v_index = torch.FloatTensor(A_data).to(self.device)
-        A_shape = [X.shape[0], X.shape[0]]
-        A = torch.sparse.FloatTensor(adjacency_indexes, v_index, torch.Size(A_shape)).to_dense()
+        A_values = torch.ones(adjacency_indexes.shape[1], dtype=torch.float32, device=X.device)
+        A = self._build_sparse_coo(
+            indices=adjacency_indexes,
+            values=A_values,
+            shape=[X.shape[0], X.shape[0]],
+            device=X.device,
+        )
 
         H = [X]
 
         xhi_layer_i = X
         for i in range(k - 1):
-            xhi_layer_i = tanh(torch.mm(A, xhi_layer_i))
+            xhi_layer_i = tanh(torch.sparse.mm(A, xhi_layer_i))
             H.append(xhi_layer_i)
 
         H = self.lin(torch.cat(H, dim=1), self.xhi_layer_mask)
@@ -146,12 +161,48 @@ class MRGNN(torch.nn.Module):
 
         #compute Laplacian
         L_edge_index, L_values = get_laplacian(data.edge_index, normalization="sym")
-        L = torch.sparse.FloatTensor(L_edge_index, L_values, torch.Size([X.shape[0], X.shape[0]])).to_dense()
+        L = self._build_sparse_coo(
+            indices=L_edge_index,
+            values=L_values,
+            shape=[X.shape[0], X.shape[0]],
+            device=X.device,
+        )
 
         H = [X]
         xhi_layer_i=X
         for i in range(k - 1):
-            xhi_layer_i = tanh(torch.mm(L, xhi_layer_i))
+            xhi_layer_i = tanh(torch.sparse.mm(L, xhi_layer_i))
+            H.append(xhi_layer_i)
+
+        H = self.lin(torch.cat(H, dim=1), self.xhi_layer_mask)
+        data.reservoir = H
+
+        return data
+
+    def get_TANH_resevoir_D(self, data):
+        if data.x is None:
+            data = self.add_unitary_x(data)
+
+        X = data.x
+        k = self.max_k
+
+        # Fairing-style diffusion based on sparse normalized Laplacian.
+        L_edge_index, L_values = get_laplacian(data.edge_index, normalization="sym")
+        L = self._build_sparse_coo(
+            indices=L_edge_index,
+            values=L_values,
+            shape=[X.shape[0], X.shape[0]],
+            device=X.device,
+        )
+
+        H = [X]
+        xhi_layer_i = X
+        for i in range(k - 1):
+            L_x = torch.sparse.mm(L, xhi_layer_i)
+            if i % 2 == 0:
+                xhi_layer_i = xhi_layer_i - 0.5 * L_x
+            else:
+                xhi_layer_i = xhi_layer_i + (2.0 / 3.0) * L_x
             H.append(xhi_layer_i)
 
         H = self.lin(torch.cat(H, dim=1), self.xhi_layer_mask)
@@ -171,6 +222,11 @@ class MRGNN(torch.nn.Module):
         if data.x is not None and data.x.shape[1] == (self.in_channels + 1):
             data.x = data.x[:, 1:]
         return self.get_TANH_resevoir_L(data)
+
+    def get_TANH_resevoir_D_PROTEINS(self,data):
+        if data.x is not None and data.x.shape[1] == (self.in_channels + 1):
+            data.x = data.x[:, 1:]
+        return self.get_TANH_resevoir_D(data)
 
 
     def readout_fw(self, data):

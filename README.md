@@ -16,6 +16,7 @@ Main files:
 - `Reservoir_dataset_creation/mpi_reservoir_cache_preprocess.py`
 - `Reservoir_dataset_creation/mpi_omp_csr_multihop_preprocess.py`
 - `experiments/train_from_cache.py`
+- `experiments/run_master_fairing_cache_pipeline.py`
 - `benchmarks/benchmark_omp_preprocess_threads.py`
 
 ## Preprocess (MPI + OpenMP)
@@ -70,6 +71,53 @@ python experiments/train_from_cache.py \
   --gpu-ids 0 1 2 3
 ```
 
+## Master + Fairing grid pipeline
+
+Use two separate phases (recommended for HPC):
+
+- MPI cache preprocessing (reservoir operators `A`, `L`, `D` fairing),
+- training grid from cache.
+
+Preprocess phase:
+
+```bash
+python experiments/run_master_fairing_cache_pipeline.py \
+  --phase preprocess \
+  --dataset-root ~/Dataset/PROTEINS \
+  --dataset-name PROTEINS \
+  --output-root ~/Dataset/Reservoir_MPI_Cache \
+  --n-classes 2 \
+  --runs 0 1 \
+  --adjacency-matrices A L D \
+  --max-k-list 3 4 \
+  --n-units-list 25 50 \
+  --mpi-np 8
+```
+
+Training phase:
+
+```bash
+python experiments/run_master_fairing_cache_pipeline.py \
+  --phase train \
+  --dataset-root ~/Dataset/PROTEINS \
+  --dataset-name PROTEINS \
+  --output-root ~/Dataset/Reservoir_MPI_Cache \
+  --n-classes 2 \
+  --runs 0 1 \
+  --adjacency-matrices A L D \
+  --max-k-list 3 4 \
+  --n-units-list 25 50 \
+  --lr-list 1e-3 5e-4 \
+  --drop-prob-list 0.3 0.5 \
+  --weight-decay-list 5e-4 \
+  --batch-size-list 32 64 \
+  --readout-list funnel one_layer \
+  --n-epochs 100 \
+  --n-folds 10 \
+  --parallel-folds \
+  --gpu-ids 0 1 2 3
+```
+
 ## Benchmark preprocess scaling
 
 OpenMP threads:
@@ -104,4 +152,5 @@ mpirun -np 8 python benchmarks/benchmark_mpi_preprocess_ranks.py \
 Ready scripts are in `jobs/`:
 
 - pipeline preprocess+train for PROTEINS and ENZYMES,
+- fairing grid pipeline for PROTEINS (`preprocess_mpi_fairing_grid_proteins.sbatch`, `train_from_cache_fairing_grid_proteins.sbatch`, `submit_fairing_grid_proteins.sh`),
 - benchmark submission script for OpenMP/MPI scaling.
