@@ -30,13 +30,13 @@ singularity exec --nv --bind "$PWD":/workspace "$SIF_PATH" \
     --dataset-name ENZYMES \
     --output-root /workspace/Dataset/Reservoir_MPI_Cache \
     --n-classes 6 \
-    --runs 0 1 2 3 \
+    --runs 0 \
     --adjacency-matrices D A L \
-    --max-k-list 3 4 5 \
-    --n-units-list 25 50 \
-    --lr-list 1e-4 5e-4 \
-    --drop-prob-list 0.3 0.5 \
-    --weight-decay-list 5e-3 5e-4 \
+    --max-k-list 2 6 10 \
+    --n-units-list 50 200 \
+    --lr-list 1e-4 \
+    --drop-prob-list 0.5 \
+    --weight-decay-list 5e-4 \
     --batch-size-list 32 \
     --readout-list funnel \
     --n-epochs 100 \

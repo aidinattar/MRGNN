@@ -34,10 +34,10 @@ singularity exec --bind "$PWD":/workspace "$SIF_PATH" \
     --dataset-name PROTEINS \
     --output-root /workspace/Dataset/Reservoir_MPI_Cache \
     --n-classes 2 \
-    --runs 0 1 2 3 \
+    --runs 0 \
     --adjacency-matrices D A L \
-    --max-k-list 3 4 5 \
-    --n-units-list 25 50 \
+    --max-k-list 2 6 10 \
+    --n-units-list 50 200 \
     --mpi-launcher "mpirun" \
     --mpi-size-flag -np \
     --mpi-np "$SLURM_NTASKS" \
