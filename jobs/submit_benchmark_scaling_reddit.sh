@@ -17,14 +17,36 @@ SIF_PATH="${SIF_PATH:-/scratch/$USER/images/mrgnn_gpu_openmp_mpi.sif}"
 PARTITION="${PARTITION:-allgroups}"
 MAX_K="${MAX_K:-8}"
 ADJACENCY_MATRIX="${ADJACENCY_MATRIX:-D}"
-NUM_GRAPHS_OMP="${NUM_GRAPHS_OMP:-11929}"
-NUM_GRAPHS_MPI="${NUM_GRAPHS_MPI:-11929}"
-REPEATS_OMP="${REPEATS_OMP:-30}"
-REPEATS_MPI="${REPEATS_MPI:-30}"
-TIME_OMP="${TIME_OMP:-02:00:00}"
-TIME_MPI="${TIME_MPI:-01:00:00}"
+PROFILE="${PROFILE:-default}" # default | heavy20
+
+if [[ "${PROFILE}" == "heavy20" ]]; then
+  DEFAULT_NUM_GRAPHS_OMP=11929
+  DEFAULT_NUM_GRAPHS_MPI=11929
+  DEFAULT_REPEATS_OMP=120
+  DEFAULT_REPEATS_MPI=180
+  DEFAULT_TIME_OMP="04:00:00"
+  DEFAULT_TIME_MPI="04:00:00"
+else
+  DEFAULT_NUM_GRAPHS_OMP=11929
+  DEFAULT_NUM_GRAPHS_MPI=11929
+  DEFAULT_REPEATS_OMP=30
+  DEFAULT_REPEATS_MPI=30
+  DEFAULT_TIME_OMP="02:00:00"
+  DEFAULT_TIME_MPI="01:00:00"
+fi
+
+NUM_GRAPHS_OMP="${NUM_GRAPHS_OMP:-${DEFAULT_NUM_GRAPHS_OMP}}"
+NUM_GRAPHS_MPI="${NUM_GRAPHS_MPI:-${DEFAULT_NUM_GRAPHS_MPI}}"
+REPEATS_OMP="${REPEATS_OMP:-${DEFAULT_REPEATS_OMP}}"
+REPEATS_MPI="${REPEATS_MPI:-${DEFAULT_REPEATS_MPI}}"
+TIME_OMP="${TIME_OMP:-${DEFAULT_TIME_OMP}}"
+TIME_MPI="${TIME_MPI:-${DEFAULT_TIME_MPI}}"
 MEM_OMP="${MEM_OMP:-12G}"
 MEM_MPI="${MEM_MPI:-24G}"
+
+# To avoid noisy benchmarks, serialize submissions by default.
+SERIALIZE_SUBMISSIONS="${SERIALIZE_SUBMISSIONS:-1}"
+SERIAL_DEPENDENCY="${SERIAL_DEPENDENCY:-afterany}"
 
 # Isolate MPI scaling by default: 1 OMP thread per rank.
 MPI_OMP_THREADS="${MPI_OMP_THREADS:-1}"
@@ -42,10 +64,22 @@ MPI_RANKS_LIST=(1 2 4 8 16)
 cd "${REPO_ROOT}"
 mkdir -p logs benchmark_results/hpc
 
+echo "Profile=${PROFILE} | serialize=${SERIALIZE_SUBMISSIONS} | op=${ADJACENCY_MATRIX}"
+echo "num_graphs_omp=${NUM_GRAPHS_OMP} repeats_omp=${REPEATS_OMP} time_omp=${TIME_OMP}"
+echo "num_graphs_mpi=${NUM_GRAPHS_MPI} repeats_mpi=${REPEATS_MPI} time_mpi=${TIME_MPI}"
+echo
+
+PREV_JOB_ID=""
+
 echo "Submitting OpenMP scaling jobs for ${DATASET_NAME}..."
 OMP_JOB_IDS=()
 for t in "${OMP_THREADS_LIST[@]}"; do
-  job_id="$(sbatch --parsable \
+  dependency_arg=()
+  if [[ "${SERIALIZE_SUBMISSIONS}" == "1" && -n "${PREV_JOB_ID}" ]]; then
+    dependency_arg=(--dependency="${SERIAL_DEPENDENCY}:${PREV_JOB_ID}")
+  fi
+
+  job_id="$(sbatch --parsable "${dependency_arg[@]}" \
     --job-name="bm_omp_${DATASET_TAG}_${ADJACENCY_MATRIX}_t${t}" \
     --output="logs/%x_%j.out" \
     --error="logs/%x_%j.err" \
@@ -76,6 +110,9 @@ for t in "${OMP_THREADS_LIST[@]}"; do
           --output-json /workspace/benchmark_results/hpc/${DATASET_TAG}_${ADJACENCY_MATRIX}_omp_t${t}.json" \
   )"
   OMP_JOB_IDS+=("${job_id}")
+  if [[ "${SERIALIZE_SUBMISSIONS}" == "1" ]]; then
+    PREV_JOB_ID="${job_id}"
+  fi
   echo "  thread ${t} -> job ${job_id}"
 done
 
@@ -83,7 +120,12 @@ echo
 echo "Submitting MPI scaling jobs for ${DATASET_NAME}..."
 MPI_JOB_IDS=()
 for n in "${MPI_RANKS_LIST[@]}"; do
-  job_id="$(sbatch --parsable \
+  dependency_arg=()
+  if [[ "${SERIALIZE_SUBMISSIONS}" == "1" && -n "${PREV_JOB_ID}" ]]; then
+    dependency_arg=(--dependency="${SERIAL_DEPENDENCY}:${PREV_JOB_ID}")
+  fi
+
+  job_id="$(sbatch --parsable "${dependency_arg[@]}" \
     --job-name="bm_mpi_${DATASET_TAG}_${ADJACENCY_MATRIX}_n${n}" \
     --output="logs/%x_%j.out" \
     --error="logs/%x_%j.err" \
@@ -117,6 +159,9 @@ for n in "${MPI_RANKS_LIST[@]}"; do
           --output-json /workspace/benchmark_results/hpc/${DATASET_TAG}_${ADJACENCY_MATRIX}_mpi_n${n}.json" \
   )"
   MPI_JOB_IDS+=("${job_id}")
+  if [[ "${SERIALIZE_SUBMISSIONS}" == "1" ]]; then
+    PREV_JOB_ID="${job_id}"
+  fi
   echo "  ranks ${n} -> job ${job_id}"
 done
 

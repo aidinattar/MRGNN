@@ -2,12 +2,12 @@
 #SBATCH --job-name=mrgnn_fair_pre_enz
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
-#SBATCH --time=12:00:00
+#SBATCH --time=00:30:00
 #SBATCH --partition=allgroups
 #SBATCH --nodes=1
 #SBATCH --ntasks=8
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
+#SBATCH --mem=8G
 #SBATCH --mail-user=aidin.attar@phd.unipd.it
 #SBATCH --mail-type=END,FAIL
 
@@ -24,7 +24,7 @@ export SINGULARITY_TMPDIR="$HOME/singularity_tmp"
 export SINGULARITY_CACHEDIR="$HOME/singularity_cache"
 mkdir -p "$SINGULARITY_TMPDIR" "$SINGULARITY_CACHEDIR"
 
-SIF_PATH="/scratch/$USER/images/mrgnn_gpu_openmp_mpi.sif"
+SIF_PATH="${SIF_PATH:-/scratch/$USER/images/mrgnn_gpu_openmp_mpi.sif}"
 
 singularity exec --bind "$PWD":/workspace "$SIF_PATH" \
   python /workspace/experiments/run_master_fairing_cache_pipeline.py \
@@ -40,6 +40,6 @@ singularity exec --bind "$PWD":/workspace "$SIF_PATH" \
     --max-k-list 2 6 10 \
     --n-units-list 50 200 \
     --mpi-launcher "mpirun" \
-    --mpi-size-flag -np \
+    --mpi-size-flag=-np \
     --mpi-np "$SLURM_NTASKS" \
     --log-every 100

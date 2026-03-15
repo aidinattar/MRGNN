@@ -9,9 +9,7 @@ import sys
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description=(
-            "Master+fairing grid pipeline by phase: preprocess OR train."
-        )
+        description="Master+fairing grid pipeline by phase: preprocess OR train."
     )
     parser.add_argument(
         "--phase",
